@@ -28,17 +28,27 @@ def list_technicians():
 def list_assignments(for_date=None, badge_id=None):
     if for_date is None:
         for_date = datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d")
+    else:
+        # Ensure for_date is a string
+        for_date = str(for_date)
     assignments = db.collection("assignments").stream()
     out = []
     for doc in assignments:
         a = doc.to_dict()
         a["_id"] = doc.id
-        if a.get("service_date") != for_date:
+        sdate = str(a.get("service_date", "")).strip()
+        if not sdate:
+            continue  # skip if missing
+        if sdate != for_date:
             continue
-        if badge_id and str(a.get("badge_id", "")) != str(badge_id):
-            continue
+        if badge_id is not None:
+            aid = str(a.get("badge_id", "")).strip()
+            bid = str(badge_id).strip()
+            if aid != bid:
+                continue
         out.append(a)
     return out
+
 
 
 def add_assignment(data):
