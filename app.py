@@ -3,7 +3,11 @@ import firebase_admin
 from firebase_admin import credentials, firestore, storage
 import tempfile
 import datetime
+import pytz
 from csv_import import csv_import_tab  # Import the CSV import tab
+
+# --- California Timezone ---
+CA_TZ = pytz.timezone('America/Los_Angeles')
 
 # --- Initialize Firebase with Streamlit secrets ---
 if not firebase_admin._apps:
@@ -22,17 +26,14 @@ def list_technicians():
     return [{"id": t.id, **t.to_dict()} for t in techs]
 
 def list_assignments(today_only=True, badge_id=None):
-    today = datetime.datetime.now().date()
+    today = datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d")
     assignments = db.collection("assignments").stream()
     out = []
     for doc in assignments:
         a = doc.to_dict()
         a["_id"] = doc.id
-        try:
-            dt = datetime.datetime.fromisoformat(a["created_at"]).date()
-        except Exception:
-            continue
-        if today_only and dt != today:
+        # Use service_date for CA-based "today" logic
+        if today_only and a.get("service_date") != today:
             continue
         if badge_id and a["badge_id"] != badge_id:
             continue
@@ -40,13 +41,16 @@ def list_assignments(today_only=True, badge_id=None):
     return out
 
 def add_assignment(data):
-    data["created_at"] = datetime.datetime.now().isoformat()
+    now_ca = datetime.datetime.now(CA_TZ)
+    data["created_at"] = now_ca.isoformat()
+    data["service_date"] = now_ca.strftime("%Y-%m-%d")
     db.collection("assignments").add(data)
 
 def verify_assignment(doc_id):
+    now_ca = datetime.datetime.now(CA_TZ)
     db.collection("assignments").document(doc_id).update({
         "verified": True,
-        "verified_at": datetime.datetime.now().isoformat()
+        "verified_at": now_ca.isoformat()
     })
 
 def update_technician(badge_id, tech_data):
@@ -101,7 +105,7 @@ if view == "admin":
                     update_technician(edit_badge, update)
                     st.success(f"Technician {tech_name} updated!")
                     st.session_state.edit_mode = False
-                    st.experimental_rerun()
+                    st.rerun()
             st.button("Cancel Edit", on_click=lambda: st.session_state.update({'edit_mode': False}))
         else:
             with st.form("add_tech"):
@@ -140,11 +144,11 @@ if view == "admin":
             if cols[0].button(f"Edit {d['badge_id']}"):
                 st.session_state.edit_mode = True
                 st.session_state.edit_badge = d['badge_id']
-                st.experimental_rerun()
+                st.rerun()
             if cols[1].button(f"Delete {d['badge_id']}"):
                 db.collection("technicians").document(d['badge_id']).delete()
                 st.success(f"Deleted technician {d['badge_id']}")
-                st.experimental_rerun()
+                st.rerun()
             cols[2].markdown(f"[Copy Photo Link](javascript:navigator.clipboard.writeText('{d['photo_url']}'))")
 
     # --- Assignment Tab ---
@@ -175,11 +179,12 @@ if view == "admin":
                         "project_id": project_id,
                         "scheduled_time": scheduled_time.strftime("%H:%M"),
                         "truck_id": truck_id,
+                        "service_date": datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d"),
                     }
                     update_assignment(edit_job_id, update)
                     st.success("Assignment updated!")
                     st.session_state.edit_job = False
-                    st.experimental_rerun()
+                    st.rerun()
             st.button("Cancel Edit", on_click=lambda: st.session_state.update({'edit_job': False}))
         else:
             with st.form("assign_job"):
@@ -193,6 +198,7 @@ if view == "admin":
                 submit_job = st.form_submit_button("Assign Job")
                 if submit_job:
                     tech = techs[tech_idx]
+                    now_ca = datetime.datetime.now(CA_TZ)
                     assignment = {
                         "badge_id": tech['badge_id'],
                         "technician_name": tech['name'],
@@ -201,7 +207,9 @@ if view == "admin":
                         "project_id": project_id,
                         "scheduled_time": scheduled_time.strftime("%H:%M"),
                         "truck_id": truck_id,
-                        "verified": False
+                        "verified": False,
+                        "created_at": now_ca.isoformat(),
+                        "service_date": now_ca.strftime("%Y-%m-%d"),
                     }
                     add_assignment(assignment)
                     msg = f"""Bright Ideas Construction\n📅 Service: today at {scheduled_time.strftime('%I:%M %p')}\n👷 Technician: {tech['name']}\n🔧 Project #: {project_id}\n🏠 Address: {address}\n🚚 Truck: {truck_id}\n✅ Verify: https://energybicverification.streamlit.app/?view=verify&badge_id={tech['badge_id']}\n"""
@@ -217,11 +225,11 @@ if view == "admin":
             if cols[0].button(f"Edit job {a['_id']}"):
                 st.session_state.edit_job = True
                 st.session_state.edit_job_id = a['_id']
-                st.experimental_rerun()
+                st.rerun()
             if cols[1].button(f"Delete job {a['_id']}"):
                 db.collection("assignments").document(a['_id']).delete()
                 st.success(f"Deleted assignment {a['_id']}")
-                st.experimental_rerun()
+                st.rerun()
             # Copy text message button
             sms_text = f"Bright Ideas Construction\nService: today at {a['scheduled_time']}\nTechnician: {a['technician_name']}\nProject #: {a['project_id']}\nAddress: {a['address']}\nTruck: {a['truck_id']}\nVerify: https://energybicverification.streamlit.app/?view=verify&badge_id={a['badge_id']}\n"
             if cols[2].button(f"Copy SMS {a['_id']}"):
@@ -279,7 +287,7 @@ elif view == "verify":
                         if st.button(f"✅ I Verified (Job {idx+1})"):
                             verify_assignment(job['_id'])
                             st.success("Thank you for verifying your technician!")
-                            st.experimental_rerun()
+                            st.rerun()
                     with colB:
                         with st.expander("Show full details"):
                             st.json(job)
