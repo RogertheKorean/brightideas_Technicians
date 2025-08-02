@@ -76,13 +76,159 @@ if view == "admin":
 
     # --- Technician Manager ---
     with tab1:
-        # (Insert your Technician Manager logic here)
-        pass
+        st.header("Add/Edit Technician with Photo Upload")
+        edit_mode = st.session_state.get('edit_mode', False)
+        edit_badge = st.session_state.get('edit_badge', "")
+        techs = list_technicians()
+        if edit_mode and edit_badge:
+            tech = next((t for t in techs if t["badge_id"] == edit_badge), None)
+            with st.form("edit_tech"):
+                tech_name = st.text_input("Technician Name", value=tech["name"])
+                photo_file = st.file_uploader("Upload Technician Photo (optional)", type=["jpg","jpeg","png"])
+                submit_edit = st.form_submit_button("Update Technician")
+                if submit_edit:
+                    update = {"name": tech_name}
+                    if photo_file:
+                        temp_file = tempfile.NamedTemporaryFile(delete=False)
+                        temp_file.write(photo_file.read())
+                        temp_file.close()
+                        blob = bucket.blob(f"technician_photos/{edit_badge}_{photo_file.name}")
+                        with open(temp_file.name, "rb") as img_file:
+                            blob.upload_from_file(img_file)
+                        blob.make_public()
+                        photo_url = blob.public_url
+                        update["photo_url"] = photo_url
+                    update_technician(edit_badge, update)
+                    st.success(f"Technician {tech_name} updated!")
+                    st.session_state.edit_mode = False
+                    st.experimental_rerun()
+            st.button("Cancel Edit", on_click=lambda: st.session_state.update({'edit_mode': False}))
+        else:
+            with st.form("add_tech"):
+                tech_name = st.text_input("Technician Name")
+                badge_id = st.text_input("Badge ID")
+                photo_file = st.file_uploader("Upload Technician Photo", type=["jpg", "jpeg", "png"])
+                submitted = st.form_submit_button("Add Technician")
+                if submitted:
+                    if not (tech_name and badge_id and photo_file):
+                        st.error("All fields required.")
+                    else:
+                        temp_file = tempfile.NamedTemporaryFile(delete=False)
+                        temp_file.write(photo_file.read())
+                        temp_file.close()
+                        blob = bucket.blob(f"technician_photos/{badge_id}_{photo_file.name}")
+                        with open(temp_file.name, "rb") as img_file:
+                            blob.upload_from_file(img_file)
+                        blob.make_public()
+                        photo_url = blob.public_url
+                        tech_data = {
+                            "name": tech_name,
+                            "badge_id": badge_id,
+                            "photo_url": photo_url,
+                        }
+                        db.collection("technicians").document(badge_id).set(tech_data)
+                        st.success(f"Technician {tech_name} added with photo!")
+                        st.image(photo_url, width=200, caption="Uploaded Photo")
+                        st.write("Photo URL:", photo_url)
+            st.session_state.edit_mode = False
+
+        st.subheader("All Technicians in Database")
+        for d in techs:
+            st.write(f"👷 {d['name']} ({d['badge_id']})")
+            st.image(d['photo_url'], width=120)
+            cols = st.columns(3)
+            if cols[0].button(f"Edit {d['badge_id']}"):
+                st.session_state.edit_mode = True
+                st.session_state.edit_badge = d['badge_id']
+                st.experimental_rerun()
+            if cols[1].button(f"Delete {d['badge_id']}"):
+                db.collection("technicians").document(d['badge_id']).delete()
+                st.success(f"Deleted technician {d['badge_id']}")
+                st.experimental_rerun()
+            cols[2].markdown(f"[Copy Photo Link](javascript:navigator.clipboard.writeText('{d['photo_url']}'))")
 
     # --- Assignment Tab ---
     with tab2:
-        # (Insert your Assignment logic here)
-        pass
+        st.header("Assign/Edit Job to Technician")
+        edit_job = st.session_state.get('edit_job', False)
+        edit_job_id = st.session_state.get('edit_job_id', "")
+        techs = list_technicians()
+        if edit_job and edit_job_id:
+            assignments = list_assignments(today_only=False)
+            a = next((x for x in assignments if x['_id'] == edit_job_id), None)
+            with st.form("edit_job_form"):
+                tech_options = [f"{t['name']} ({t['badge_id']})" for t in techs]
+                tech_idx = st.selectbox("Technician", options=range(len(tech_options)), format_func=lambda i: tech_options[i], index=next((i for i,t in enumerate(techs) if t["badge_id"]==a["badge_id"]), 0))
+                customer_name = st.text_input("Customer Name", value=a['customer_name'])
+                address = st.text_input("Address", value=a['address'])
+                project_id = st.text_input("Project ID", value=a['project_id'])
+                scheduled_time = st.time_input("Scheduled Time", datetime.datetime.strptime(a['scheduled_time'], "%H:%M").time())
+                truck_id = st.text_input("Truck ID", value=a['truck_id'])
+                submit_edit_job = st.form_submit_button("Update Assignment")
+                if submit_edit_job:
+                    tech = techs[tech_idx]
+                    update = {
+                        "badge_id": tech['badge_id'],
+                        "technician_name": tech['name'],
+                        "customer_name": customer_name,
+                        "address": address,
+                        "project_id": project_id,
+                        "scheduled_time": scheduled_time.strftime("%H:%M"),
+                        "truck_id": truck_id,
+                    }
+                    update_assignment(edit_job_id, update)
+                    st.success("Assignment updated!")
+                    st.session_state.edit_job = False
+                    st.experimental_rerun()
+            st.button("Cancel Edit", on_click=lambda: st.session_state.update({'edit_job': False}))
+        else:
+            with st.form("assign_job"):
+                tech_options = [f"{t['name']} ({t['badge_id']})" for t in techs]
+                tech_idx = st.selectbox("Technician", options=range(len(tech_options)), format_func=lambda i: tech_options[i])
+                customer_name = st.text_input("Customer Name")
+                address = st.text_input("Address")
+                project_id = st.text_input("Project ID")
+                scheduled_time = st.time_input("Scheduled Time", datetime.time(9, 0))
+                truck_id = st.text_input("Truck ID")
+                submit_job = st.form_submit_button("Assign Job")
+                if submit_job:
+                    tech = techs[tech_idx]
+                    assignment = {
+                        "badge_id": tech['badge_id'],
+                        "technician_name": tech['name'],
+                        "customer_name": customer_name,
+                        "address": address,
+                        "project_id": project_id,
+                        "scheduled_time": scheduled_time.strftime("%H:%M"),
+                        "truck_id": truck_id,
+                        "verified": False
+                    }
+                    add_assignment(assignment)
+                    msg = f"""Bright Ideas Construction\n📅 Service: today at {scheduled_time.strftime('%I:%M %p')}\n👷 Technician: {tech['name']}\n🔧 Project #: {project_id}\n🏠 Address: {address}\n🚚 Truck: {truck_id}\n✅ Verify: https://energybicverification.streamlit.app/?view=verify&badge_id={tech['badge_id']}\n"""
+                    st.success("Assignment added!")
+                    st.info("Auto Text Message:\n" + msg)
+            st.session_state.edit_job = False
+
+        st.subheader("Today's Assignments")
+        for a in list_assignments():
+            st.write(f"{a['scheduled_time']} | {a['technician_name']} | {a['customer_name']} | {a['address']} | {a['project_id']}")
+            # Edit/delete buttons
+            cols = st.columns(3)
+            if cols[0].button(f"Edit job {a['_id']}"):
+                st.session_state.edit_job = True
+                st.session_state.edit_job_id = a['_id']
+                st.experimental_rerun()
+            if cols[1].button(f"Delete job {a['_id']}"):
+                db.collection("assignments").document(a['_id']).delete()
+                st.success(f"Deleted assignment {a['_id']}")
+                st.experimental_rerun()
+            # Copy text message button
+            sms_text = f"Bright Ideas Construction\nService: today at {a['scheduled_time']}\nTechnician: {a['technician_name']}\nProject #: {a['project_id']}\nAddress: {a['address']}\nTruck: {a['truck_id']}\nVerify: https://energybicverification.streamlit.app/?view=verify&badge_id={a['badge_id']}\n"
+            if cols[2].button(f"Copy SMS {a['_id']}"):
+                st.code(sms_text, language='text')
+
+        # Export CSV button
+        export_assignments_csv()
 
     # --- Bulk CSV Import Tab ---
     with tab3:
