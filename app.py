@@ -231,13 +231,12 @@ if view == "admin":
 
 elif view == "verify":
     st.title("Customer: Verify Your Technician")
-    badge_id = query_params.get("badge_id", [""])[0] if isinstance(query_params.get("badge_id", ""), list) else query_params.get("badge_id", "")
+    badge_id = query_params.get("badge_id", [""])[0]
     if not badge_id:
         badge_id = st.text_input("Enter Technician Badge ID to verify jobs for today")
     if badge_id:
         jobs = list_assignments(badge_id=badge_id)
         tech = next((t for t in list_technicians() if t['badge_id'] == badge_id), None)
-
         if tech:
             st.markdown(
                 f"""
@@ -275,6 +274,7 @@ elif view == "verify":
                         if st.button(f"✅ I Verified (Job {idx+1})"):
                             verify_assignment(job['_id'])
                             st.success("Thank you for verifying your technician!")
+                            st.experimental_rerun()
                     with colB:
                         with st.expander("Show full details"):
                             st.json(job)
