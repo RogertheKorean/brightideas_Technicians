@@ -25,15 +25,15 @@ def list_technicians():
     techs = db.collection("technicians").stream()
     return [{"id": t.id, **t.to_dict()} for t in techs]
 
-def list_assignments(today_only=True, badge_id=None):
-    today = datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d")
+def list_assignments(for_date=None, badge_id=None):
+    if for_date is None:
+        for_date = datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d")
     assignments = db.collection("assignments").stream()
     out = []
     for doc in assignments:
         a = doc.to_dict()
         a["_id"] = doc.id
-        # Use service_date for CA-based "today" logic
-        if today_only and a.get("service_date") != today:
+        if a.get("service_date") != for_date:
             continue
         if badge_id and a["badge_id"] != badge_id:
             continue
@@ -154,11 +154,15 @@ if view == "admin":
     # --- Assignment Tab ---
     with tab2:
         st.header("Assign/Edit Job to Technician")
+        # Date filter for assignments
+        selected_date = st.date_input("Show assignments for date (California time)", value=datetime.datetime.now(CA_TZ).date())
+        selected_date_str = selected_date.strftime("%Y-%m-%d")
+
         edit_job = st.session_state.get('edit_job', False)
         edit_job_id = st.session_state.get('edit_job_id', "")
         techs = list_technicians()
         if edit_job and edit_job_id:
-            assignments = list_assignments(today_only=False)
+            assignments = list_assignments(for_date=selected_date_str)
             a = next((x for x in assignments if x['_id'] == edit_job_id), None)
             with st.form("edit_job_form"):
                 tech_options = [f"{t['name']} ({t['badge_id']})" for t in techs]
@@ -179,7 +183,7 @@ if view == "admin":
                         "project_id": project_id,
                         "scheduled_time": scheduled_time.strftime("%H:%M"),
                         "truck_id": truck_id,
-                        "service_date": datetime.datetime.now(CA_TZ).strftime("%Y-%m-%d"),
+                        "service_date": selected_date_str,  # Use selected date here
                     }
                     update_assignment(edit_job_id, update)
                     st.success("Assignment updated!")
@@ -209,18 +213,17 @@ if view == "admin":
                         "truck_id": truck_id,
                         "verified": False,
                         "created_at": now_ca.isoformat(),
-                        "service_date": now_ca.strftime("%Y-%m-%d"),
+                        "service_date": selected_date_str,  # Use selected date here
                     }
                     add_assignment(assignment)
-                    msg = f"""Bright Ideas Construction\n📅 Service: today at {scheduled_time.strftime('%I:%M %p')}\n👷 Technician: {tech['name']}\n🔧 Project #: {project_id}\n🏠 Address: {address}\n🚚 Truck: {truck_id}\n✅ Verify: https://energybicverification.streamlit.app/?view=verify&badge_id={tech['badge_id']}\n"""
+                    msg = f"""Bright Ideas Construction\n📅 Service: {selected_date_str} at {scheduled_time.strftime('%I:%M %p')}\n👷 Technician: {tech['name']}\n🔧 Project #: {project_id}\n🏠 Address: {address}\n🚚 Truck: {truck_id}\n✅ Verify: https://energybicverification.streamlit.app/?view=verify&badge_id={tech['badge_id']}\n"""
                     st.success("Assignment added!")
                     st.info("Auto Text Message:\n" + msg)
             st.session_state.edit_job = False
 
-        st.subheader("Today's Assignments")
-        for a in list_assignments():
+        st.subheader("Assignments for selected date")
+        for a in list_assignments(for_date=selected_date_str):
             st.write(f"{a['scheduled_time']} | {a['technician_name']} | {a['customer_name']} | {a['address']} | {a['project_id']}")
-            # Edit/delete buttons
             cols = st.columns(3)
             if cols[0].button(f"Edit job {a['_id']}"):
                 st.session_state.edit_job = True
@@ -230,12 +233,10 @@ if view == "admin":
                 db.collection("assignments").document(a['_id']).delete()
                 st.success(f"Deleted assignment {a['_id']}")
                 st.rerun()
-            # Copy text message button
-            sms_text = f"Bright Ideas Construction\nService: today at {a['scheduled_time']}\nTechnician: {a['technician_name']}\nProject #: {a['project_id']}\nAddress: {a['address']}\nTruck: {a['truck_id']}\nVerify: https://energybicverification.streamlit.app/?view=verify&badge_id={a['badge_id']}\n"
+            sms_text = f"Bright Ideas Construction\nService: {selected_date_str} at {a['scheduled_time']}\nTechnician: {a['technician_name']}\nProject #: {a['project_id']}\nAddress: {a['address']}\nTruck: {a['truck_id']}\nVerify: https://energybicverification.streamlit.app/?view=verify&badge_id={a['badge_id']}\n"
             if cols[2].button(f"Copy SMS {a['_id']}"):
                 st.code(sms_text, language='text')
 
-        # Export CSV button
         export_assignments_csv()
 
     # --- Bulk CSV Import Tab ---
@@ -246,18 +247,20 @@ elif view == "verify":
     st.title("Customer: Verify Your Technician")
     badge_id = query_params.get("badge_id", [""])[0]
     if not badge_id:
-        badge_id = st.text_input("Enter Technician Badge ID to verify jobs for today")
+        badge_id = st.text_input("Enter Technician Badge ID to verify jobs for selected date")
     if badge_id:
-        jobs = list_assignments(badge_id=badge_id)
+        selected_date = st.date_input("Select date (California time)", value=datetime.datetime.now(CA_TZ).date())
+        selected_date_str = selected_date.strftime("%Y-%m-%d")
+        jobs = list_assignments(for_date=selected_date_str, badge_id=badge_id)
         tech = next((t for t in list_technicians() if t['badge_id'] == badge_id), None)
         if tech:
             st.markdown(
                 f"""
-                <div style=\"display: flex; align-items: center; background: #f8f9fa; border-radius: 12px; padding: 18px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.07);\">
-                  <img src=\"{tech['photo_url']}\" width=\"95\" style=\"border-radius: 16px; margin-right: 24px; border: 2px solid #eee;\">
+                <div style="display: flex; align-items: center; background: #f8f9fa; border-radius: 12px; padding: 18px; margin-bottom: 20px; box-shadow: 0 2px 6px rgba(0,0,0,0.07);">
+                  <img src="{tech['photo_url']}" width="95" style="border-radius: 16px; margin-right: 24px; border: 2px solid #eee;">
                   <div>
-                    <h3 style=\"margin-bottom: 5px;\">Technician: {tech['name']}</h3>
-                    <div style=\"color: #777;\">Badge ID: <b>{badge_id}</b></div>
+                    <h3 style="margin-bottom: 5px;">Technician: {tech['name']}</h3>
+                    <div style="color: #777;">Badge ID: <b>{badge_id}</b></div>
                   </div>
                 </div>
                 """,
@@ -265,14 +268,14 @@ elif view == "verify":
             )
 
         if not jobs:
-            st.warning("No jobs found for this technician today.")
+            st.warning("No jobs found for this technician on the selected date.")
         else:
             st.markdown("### Your Scheduled Service")
             for idx, job in enumerate(jobs):
                 with st.container():
                     st.markdown(
                         f"""
-                        <div style=\"background: #e9f8ef; border-radius: 10px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);\">
+                        <div style="background: #e9f8ef; border-radius: 10px; padding: 18px 22px; margin-bottom: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.06);">
                           <div><b>Customer:</b> {job['customer_name']}</div>
                           <div><b>Address:</b> {job['address']}</div>
                           <div><b>Project #:</b> {job['project_id']}</div>
