@@ -35,10 +35,11 @@ def list_assignments(for_date=None, badge_id=None):
         a["_id"] = doc.id
         if a.get("service_date") != for_date:
             continue
-        if badge_id and a["badge_id"] != badge_id:
+        if badge_id and str(a.get("badge_id", "")) != str(badge_id):
             continue
         out.append(a)
     return out
+
 
 def add_assignment(data):
     now_ca = datetime.datetime.now(CA_TZ)
